@@ -129,13 +129,11 @@ mod tests {
     fn view(venue: &'static str, bid: &str, ask: &str, published_at: Instant) -> BookView {
         let lv = |p: &str| Level::new(Fixed::parse(p).unwrap(), Fixed::parse("1").unwrap());
         BookView {
-            venue,
-            status: FeedStatus::Live,
             bids: vec![lv(bid)],
             asks: vec![lv(ask)],
             last_update_id: Some(1),
-            exchange_time_ms: 0,
             published_at,
+            ..BookView::empty(venue, FeedStatus::Live)
         }
     }
 

@@ -1,5 +1,7 @@
 use std::time::Duration;
 
+use crate::faults::Faults;
+
 /// Everything a feed task needs to know about one venue.
 #[derive(Debug, Clone)]
 pub struct FeedConfig {
@@ -8,10 +10,13 @@ pub struct FeedConfig {
     pub snapshot_url: String,
     /// Levels per side published to readers.
     pub view_levels: usize,
-    /// No frame within this window means the connection is considered dead.
+    /// No depth event within this window means the connection is considered dead.
     pub read_timeout: Duration,
-    pub reconnect_delay: Duration,
+    pub connect_timeout: Duration,
+    pub reconnect_base: Duration,
+    pub reconnect_max: Duration,
     pub max_buffer: usize,
+    pub faults: Faults,
 }
 
 pub const SNAPSHOT_LIMIT: u32 = 1000;

@@ -14,6 +14,7 @@ use std::collections::VecDeque;
 use serde::Deserialize;
 
 use crate::book::{Level, OrderBook};
+use crate::fixed::Fixed;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct DepthUpdate {
@@ -75,6 +76,12 @@ pub enum SyncError {
     SnapshotTooOld { snapshot_id: u64, first_id: u64 },
     #[error("pre-snapshot buffer overflow ({0} events)")]
     BufferOverflow(usize),
+    #[error("book crossed after u={final_id}: best bid {bid} >= best ask {ask}")]
+    Crossed {
+        final_id: u64,
+        bid: Fixed,
+        ask: Fixed,
+    },
 }
 
 impl SyncError {
@@ -199,11 +206,27 @@ impl BookSync {
             }
         }
         self.book.apply(&ev.bids, &ev.asks);
+        if self.book.is_crossed() {
+            let price = |l: Option<Level>| l.map(|l| l.price).unwrap_or_default();
+            return Err(SyncError::Crossed {
+                final_id: ev.final_id,
+                bid: price(self.book.best_bid()),
+                ask: price(self.book.best_ask()),
+            });
+        }
         self.exchange_time_ms = ev.event_time;
         self.phase = Phase::Live {
             last_id: ev.final_id,
         };
         Ok(UpdateOutcome::Applied)
+    }
+
+    /// Drops the book and buffer; the next event starts buffering for a new snapshot.
+    pub fn reset(&mut self) {
+        self.book.clear();
+        self.buffer.clear();
+        self.exchange_time_ms = 0;
+        self.phase = Phase::AwaitingSnapshot;
     }
 }
 
@@ -350,6 +373,36 @@ mod tests {
             s.on_update(ev(3, 3, 2, &[])),
             Err(SyncError::BufferOverflow(2))
         );
+    }
+
+    #[test]
+    fn crossed_book_is_an_error() {
+        let mut s = BookSync::new(100);
+        s.on_update(ev(20, 30, 19, &[])).unwrap();
+        s.on_snapshot(snap(25)).unwrap();
+        let err = s.on_update(ev(31, 32, 30, &[lv("101", "1")])).unwrap_err();
+        assert!(
+            matches!(err, SyncError::Crossed { final_id: 32, .. }),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn reset_allows_full_resync_on_same_stream() {
+        let mut s = BookSync::new(100);
+        s.on_update(ev(20, 30, 19, &[])).unwrap();
+        s.on_snapshot(snap(25)).unwrap();
+        assert!(s.on_update(ev(36, 40, 35, &[])).is_err());
+
+        s.reset();
+        assert_eq!(s.phase(), Phase::AwaitingSnapshot);
+        assert_eq!(s.book().depth(), (0, 0));
+        assert_eq!(
+            s.on_update(ev(41, 45, 40, &[])).unwrap(),
+            UpdateOutcome::Buffered
+        );
+        s.on_snapshot(snap(43)).unwrap();
+        assert_eq!(s.phase(), Phase::Live { last_id: 45 });
     }
 
     #[test]

@@ -14,6 +14,8 @@ pub enum FeedStatus {
     Syncing,
     /// Book is consistent with the stream.
     Live,
+    /// Book broke (gap, crossed); rebuilding from a new snapshot on the same connection.
+    Resyncing,
     /// Connection lost; waiting before reconnecting. Book data is not usable.
     Disconnected,
 }
@@ -24,10 +26,27 @@ impl fmt::Display for FeedStatus {
             FeedStatus::Connecting => "connecting",
             FeedStatus::Syncing => "syncing",
             FeedStatus::Live => "live",
+            FeedStatus::Resyncing => "resyncing",
             FeedStatus::Disconnected => "disconnected",
         };
         f.write_str(s)
     }
+}
+
+/// Lifetime counters of one feed, maintained by its task.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct FeedStats {
+    pub connects: u64,
+    pub resyncs: u64,
+    pub bad_frames: u64,
+    pub events: u64,
+}
+
+/// Feed health published alongside every view.
+#[derive(Debug, Clone, Copy)]
+pub struct FeedHealth {
+    pub status_since: Instant,
+    pub stats: FeedStats,
 }
 
 /// Immutable, internally consistent picture of one venue's book that readers consume.
@@ -38,6 +57,7 @@ impl fmt::Display for FeedStatus {
 pub struct BookView {
     pub venue: &'static str,
     pub status: FeedStatus,
+    pub health: FeedHealth,
     /// Best levels first. Empty unless `status == Live`.
     pub bids: Vec<Level>,
     pub asks: Vec<Level>,
@@ -50,9 +70,22 @@ pub struct BookView {
 
 impl BookView {
     pub fn empty(venue: &'static str, status: FeedStatus) -> Self {
+        let now = Instant::now();
+        Self::status_only(
+            venue,
+            status,
+            FeedHealth {
+                status_since: now,
+                stats: FeedStats::default(),
+            },
+        )
+    }
+
+    pub fn status_only(venue: &'static str, status: FeedStatus, health: FeedHealth) -> Self {
         Self {
             venue,
             status,
+            health,
             bids: Vec::new(),
             asks: Vec::new(),
             last_update_id: None,
@@ -67,10 +100,12 @@ impl BookView {
         levels: usize,
         last_update_id: Option<u64>,
         exchange_time_ms: u64,
+        health: FeedHealth,
     ) -> Self {
         Self {
             venue,
             status: FeedStatus::Live,
+            health,
             bids: book.top_bids(levels),
             asks: book.top_asks(levels),
             last_update_id,
