@@ -4,7 +4,7 @@ use std::time::Duration;
 
 #[derive(Debug, Clone, Default)]
 pub struct Faults {
-    /// Silently discard every N-th frame (simulates a lost message → sequence gap).
+    /// Silently discard every N-th frame (simulates a lost message -> sequence gap).
     pub drop_every: Option<u64>,
     /// Replace every N-th frame with garbage (simulates a corrupted frame).
     pub garbage_every: Option<u64>,

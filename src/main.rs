@@ -77,13 +77,13 @@ struct Args {
     /// Venue that the --fault-* options apply to
     #[arg(long, value_enum)]
     fault_venue: Option<Venue>,
-    /// Drop every N-th frame (causes a sequence gap → resync)
+    /// Drop every N-th frame (causes a sequence gap -> resync)
     #[arg(long, requires = "fault_venue")]
     fault_drop_every: Option<u64>,
     /// Corrupt every N-th frame (bad-frame handling)
     #[arg(long, requires = "fault_venue")]
     fault_garbage_every: Option<u64>,
-    /// Ignore all frames after N seconds into each session (watchdog → reconnect)
+    /// Ignore all frames after N seconds into each session (watchdog -> reconnect)
     #[arg(long, requires = "fault_venue")]
     fault_mute_after_secs: Option<u64>,
 }

@@ -1,7 +1,7 @@
 //! Cross-venue mid deviation signal for the Aster ETHUSDT perpetual.
 //!
 //! Binance is the reference market (deeper, faster). If Aster's mid sits below Binance's mid
-//! by more than a threshold, we expect Aster to catch up (Long bias); above it — to come
+//! by more than a threshold, we expect Aster to catch up (Long bias); above it - to come
 //! down (Short bias). Profitability is not a goal.
 //!
 //! Guards, each forcing Hold with the reason:

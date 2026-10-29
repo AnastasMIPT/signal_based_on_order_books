@@ -40,7 +40,7 @@ pub struct FeedStats {
     pub resyncs: u64,
     pub bad_frames: u64,
     pub events: u64,
-    /// Frame received → view published, over applied events.
+    /// Frame received -> view published, over applied events.
     pub hot_path_samples: u64,
     pub hot_path_ns_sum: u64,
     pub hot_path_ns_max: u64,
