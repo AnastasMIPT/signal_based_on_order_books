@@ -13,11 +13,11 @@ mod view;
 use std::time::{Duration, Instant};
 
 use clap::Parser;
-use tracing::info;
+use tracing::{debug, info};
 use tracing_subscriber::EnvFilter;
 
 use crate::faults::Faults;
-use crate::signal::SignalParams;
+use crate::signal::{SignalEngine, SignalParams};
 use crate::venue::FeedConfig;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
@@ -40,9 +40,20 @@ struct Args {
     // View older than stale_ms => one of venue stale => HOLD
     #[arg(long, default_value_t = 3000)]
     stale_ms: u64,
-    // threshold for difference between mid prices from venues
-    #[arg(long, default_value_t = 2.0)]
-    threshold_bps: f64,
+    // Last update lagging the exchange clock by more than this => venue unusable => HOLD
+    #[arg(long, default_value_t = 1000)]
+    max_lag_ms: i64,
+    // Books further apart than this on exchange clocks => HOLD
+    #[arg(long, default_value_t = 500)]
+    max_skew_ms: i64,
+    // |Aster mid - Binance mid| in bps to enter a bias / to keep it
+    #[arg(long, default_value_t = 1.5)]
+    enter_bps: f64,
+    #[arg(long, default_value_t = 0.5)]
+    exit_bps: f64,
+    // Unchanged decisions are logged once per this many seconds; changes always
+    #[arg(long, default_value_t = 5)]
+    signal_heartbeat_secs: u64,
 
     // No depth events => session termination
     #[arg(long, default_value_t = 5)]
@@ -145,15 +156,33 @@ async fn main() -> anyhow::Result<()> {
 
     let params = SignalParams {
         stale_after: Duration::from_millis(args.stale_ms),
-        threshold_bps: args.threshold_bps,
+        max_lag_ms: args.max_lag_ms,
+        max_skew_ms: args.max_skew_ms,
+        enter_bps: args.enter_bps,
+        exit_bps: args.exit_bps,
     };
+    let mut engine = SignalEngine::new(params);
+    let heartbeat = Duration::from_secs(args.signal_heartbeat_secs);
+    let mut last_bias = None;
+    let mut last_logged = Instant::now();
     let mut ticker = tokio::time::interval(Duration::from_millis(args.signal_interval_ms));
-    info!(symbol = args.symbol, "started");
+    info!(symbol = args.symbol, ?params, "started");
     loop {
         tokio::select! {
             _ = ticker.tick() => {
-                let decision = signal::evaluate(&binance.load(), &aster.load(), Instant::now(), &params);
-                info!(bias = %decision.bias, "{}", decision.reason);
+                let decision = engine.evaluate(&binance.load(), &aster.load(), Instant::now());
+                if last_bias != Some(decision.bias) {
+                    info!(bias = %decision.bias, from = ?last_bias, "signal changed: {}", decision.reason);
+                } else if last_logged.elapsed() >= heartbeat {
+                    info!(bias = %decision.bias, "signal: {}", decision.reason);
+                } else {
+                    continue;
+                }
+                if !decision.details.is_empty() {
+                    debug!("signal inputs: {}", decision.details);
+                }
+                last_bias = Some(decision.bias);
+                last_logged = Instant::now();
             }
             _ = tokio::signal::ctrl_c() => {
                 info!("shutting down");

@@ -1,6 +1,6 @@
 use std::convert::Infallible;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, bail};
 use futures_util::StreamExt;
@@ -84,7 +84,8 @@ impl<'a> Publisher<'a> {
         )));
     }
 
-    fn publish_book(&mut self, sync: &BookSync) {
+    /// `received_wall_ms`: local wall clock when the data that changed the book arrived.
+    fn publish_book(&mut self, sync: &BookSync, received_wall_ms: i64) {
         if self.status != FeedStatus::Live {
             let (bids, asks) = sync.book().depth();
             self.transition(FeedStatus::Live, "book synced");
@@ -102,6 +103,7 @@ impl<'a> Publisher<'a> {
             self.cfg.view_levels,
             sync.last_update_id(),
             sync.exchange_time_ms(),
+            received_wall_ms - sync.exchange_time_ms() as i64,
             self.health(),
         )));
     }
@@ -173,6 +175,7 @@ async fn session(
     loop {
         let mut changed = false;
         let mut broken: Option<SyncError> = None;
+        let mut frame_at: Option<Instant> = None;
 
         tokio::select! {
             () = &mut watchdog => bail!("watchdog: no depth events for {:?}", cfg.read_timeout),
@@ -219,6 +222,8 @@ async fn session(
                     // Pings are answered by tungstenite itself.
                     _ => continue,
                 };
+                let now = Instant::now();
+                frame_at = Some(now);
                 frame_no += 1;
                 let payload = match cfg.faults.check(frame_no, started.elapsed()) {
                     None => text.as_str(),
@@ -239,7 +244,7 @@ async fn session(
                 };
                 consecutive_bad = 0;
                 feed.stats.events += 1;
-                watchdog.as_mut().reset(Instant::now() + cfg.read_timeout);
+                watchdog.as_mut().reset(now + cfg.read_timeout);
 
                 match sync.on_update(ev) {
                     Ok(UpdateOutcome::Buffered) if snapshot_attempts == 0 => {
@@ -269,9 +274,18 @@ async fn session(
 
         if changed && sync.is_live() {
             consecutive_resyncs = 0;
-            feed.publish_book(&sync);
+            feed.publish_book(&sync, wall_clock_ms());
+            if let Some(t) = frame_at {
+                feed.stats.record_hot_path(t.elapsed().as_nanos() as u64);
+            }
         }
     }
+}
+
+fn wall_clock_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis() as i64)
 }
 
 fn spawn_snapshot(

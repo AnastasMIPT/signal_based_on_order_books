@@ -23,13 +23,18 @@ pub async fn run(cells: Vec<ViewCell>, every: Duration, stale_after: Duration) {
             let rate = s.events.saturating_sub(*prev) as f64 / elapsed;
             *prev = s.events;
             let view_age = v.published_at.elapsed();
+            let live = v.status == FeedStatus::Live;
+            let hot_path_avg_us = s.hot_path_ns_sum / s.hot_path_samples.max(1) / 1000;
             info!(
                 venue = v.venue,
                 status = %v.status,
-                stale = v.status == FeedStatus::Live && view_age > stale_after,
+                stale = live && view_age > stale_after,
                 status_for_s = v.health.status_since.elapsed().as_secs(),
                 events_per_s = format!("{rate:.1}"),
                 view_age_ms = view_age.as_millis() as u64,
+                exchange_lag_ms = live.then_some(v.exchange_lag_ms),
+                hot_path_avg_us,
+                hot_path_max_us = s.hot_path_ns_max / 1000,
                 last_update_id = v.last_update_id,
                 connects = s.connects,
                 resyncs = s.resyncs,

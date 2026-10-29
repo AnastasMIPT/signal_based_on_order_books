@@ -40,6 +40,18 @@ pub struct FeedStats {
     pub resyncs: u64,
     pub bad_frames: u64,
     pub events: u64,
+    /// Frame received → view published, over applied events.
+    pub hot_path_samples: u64,
+    pub hot_path_ns_sum: u64,
+    pub hot_path_ns_max: u64,
+}
+
+impl FeedStats {
+    pub fn record_hot_path(&mut self, ns: u64) {
+        self.hot_path_samples += 1;
+        self.hot_path_ns_sum += ns;
+        self.hot_path_ns_max = self.hot_path_ns_max.max(ns);
+    }
 }
 
 /// Feed health published alongside every view.
@@ -64,6 +76,9 @@ pub struct BookView {
     pub last_update_id: Option<u64>,
     /// Exchange event time of the last applied update, ms since epoch.
     pub exchange_time_ms: u64,
+    /// Local wall clock at receipt minus `exchange_time_ms` of the last applied update:
+    /// how far behind the exchange this book is (includes local clock offset).
+    pub exchange_lag_ms: i64,
     /// Local time at which this view was published.
     pub published_at: Instant,
 }
@@ -90,6 +105,7 @@ impl BookView {
             asks: Vec::new(),
             last_update_id: None,
             exchange_time_ms: 0,
+            exchange_lag_ms: 0,
             published_at: Instant::now(),
         }
     }
@@ -100,6 +116,7 @@ impl BookView {
         levels: usize,
         last_update_id: Option<u64>,
         exchange_time_ms: u64,
+        exchange_lag_ms: i64,
         health: FeedHealth,
     ) -> Self {
         Self {
@@ -110,6 +127,7 @@ impl BookView {
             asks: book.top_asks(levels),
             last_update_id,
             exchange_time_ms,
+            exchange_lag_ms,
             published_at: Instant::now(),
         }
     }
